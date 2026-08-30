@@ -76,3 +76,24 @@ jobs:
           test -f root/usr/src/linux-headers-6.17.0-999-generic/Makefile
           test -f root/lib/modules/6.17.0-999-generic/modules.builtin
 
+      - name: Verify crash-dump configuration
+        run: |
+          set -eux
+          mkdir buildinfo
+          dpkg-deb --extract artifact/linux-buildinfo-6.17.0-999-generic_*.deb buildinfo
+          config=buildinfo/usr/lib/linux/6.17.0-999-generic/config
+          grep -Fx 'CONFIG_KEXEC=y' "$config"
+          grep -Fx 'CONFIG_CRASH_DUMP=y' "$config"
+          grep -Fx 'CONFIG_PROC_VMCORE=y' "$config"
+          grep -Fx 'CONFIG_DEBUG_INFO=y' "$config"
+
+      - name: Build Broadcom STA through DKMS against candidate headers
+        run: |
+          set -eux
+          apt-get install --yes --no-install-recommends \
+            ./artifact/linux-headers-6.17.0-999_*.deb \
+            ./artifact/linux-headers-6.17.0-999-generic_*.deb
+          apt-get install --yes --no-install-recommends broadcom-sta-dkms
+          dkms status -k 6.17.0-999-generic | tee dkms-status.txt
+          grep -F '6.17.0-999-generic' dkms-status.txt
+          grep -F 'installed' dkms-status.txt
