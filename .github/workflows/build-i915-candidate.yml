@@ -19,7 +19,8 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
       SOURCE_REPOSITORY: https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/questing
-      SOURCE_COMMIT: f86737eef0da36deab294903e859265785a0feda
+      SOURCE_TAG_OBJECT: f86737eef0da36deab294903e859265785a0feda
+      SOURCE_COMMIT: a399ea490b86e68c36c9c35d26c47c1866611239
       PATCH_URL: https://bugs.launchpad.net/ubuntu/+source/linux/+bug/2161098/+attachment/5993118/+files/0001-drm-i915-Ensure-stale-bytes-from-the-heap-aren-t-int.patch
       PATCH_SHA256: b237a20b8787272cf977c45a8f46ad22be3096306ae12a12db8e16bf4876f900
     steps:
@@ -35,7 +36,7 @@ jobs:
           set -eux
           git init kernel
           git -C kernel remote add origin "$SOURCE_REPOSITORY"
-          git -C kernel fetch --depth=1 origin "$SOURCE_COMMIT"
+          git -C kernel fetch --depth=1 origin "$SOURCE_TAG_OBJECT"
           git -C kernel checkout --detach FETCH_HEAD
           test "$(git -C kernel rev-parse HEAD)" = "$SOURCE_COMMIT"
 
@@ -81,6 +82,7 @@ jobs:
             -exec cp {} artifacts/ \;
           {
             echo "source_repository=$SOURCE_REPOSITORY"
+            echo "source_tag_object=$SOURCE_TAG_OBJECT"
             echo "source_commit=$SOURCE_COMMIT"
             echo "patch_url=$PATCH_URL"
             echo "patch_sha256=$PATCH_SHA256"
@@ -98,4 +100,3 @@ jobs:
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
-
