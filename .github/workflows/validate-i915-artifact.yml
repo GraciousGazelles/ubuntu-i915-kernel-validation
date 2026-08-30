@@ -1,0 +1,78 @@
+name: Validate i915 build artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful kernel-build workflow run ID
+        required: true
+        default: "33318403922"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.10
+    steps:
+      - name: Install validation tools
+        run: |
+          set -eux
+          apt-get update
+          apt-get install --yes --no-install-recommends dpkg-dev kmod make gcc zstd
+
+      - name: Download exact build artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.run_id }}
+          name: ubuntu-6.17.0-999-i915-lp2161098
+          path: artifact
+
+      - name: Verify provenance, checksums, and packages
+        working-directory: artifact
+        run: |
+          set -eux
+          grep -Fx 'source_tag_object=f86737eef0da36deab294903e859265785a0feda' MANIFEST.txt
+          grep -Fx 'source_commit=a399ea490b86e68c36c9c35d26c47c1866611239' MANIFEST.txt
+          grep -Fx 'patch_sha256=b237a20b8787272cf977c45a8f46ad22be3096306ae12a12db8e16bf4876f900' MANIFEST.txt
+          grep -Fx 'candidate_version=6.17.0-999.41~lp2161098.1' MANIFEST.txt
+          sha256sum --check --strict SHA256SUMS
+          for package in ./*.deb; do
+            test "$(dpkg-deb -f "$package" Version)" = '6.17.0-999.41~lp2161098.1'
+            dpkg-deb --info "$package" >/dev/null
+          done
+
+      - name: Verify critical kernel modules and ABI
+        run: |
+          set -eux
+          mkdir root
+          dpkg-deb --extract artifact/linux-modules-6.17.0-999-generic_*.deb root
+          i915=root/lib/modules/6.17.0-999-generic/kernel/drivers/gpu/drm/i915/i915.ko.zst
+          spl=root/lib/modules/6.17.0-999-generic/kernel/zfs/spl.ko.zst
+          zfs=root/lib/modules/6.17.0-999-generic/kernel/zfs/zfs.ko.zst
+          test -s "$i915"
+          test -s "$spl"
+          test -s "$zfs"
+          modinfo -F vermagic "$i915" | grep -F '6.17.0-999-generic'
+          modinfo -F vermagic "$spl" | grep -F '6.17.0-999-generic'
+          modinfo -F vermagic "$zfs" | grep -F '6.17.0-999-generic'
+
+      - name: Verify image and headers form a coherent install set
+        run: |
+          set -eux
+          for package in \
+            artifact/linux-headers-6.17.0-999_*.deb \
+            artifact/linux-headers-6.17.0-999-generic_*.deb \
+            artifact/linux-image-unsigned-6.17.0-999-generic_*.deb \
+            artifact/linux-modules-6.17.0-999-generic_*.deb; do
+            dpkg-deb --extract "$package" root
+          done
+          test -s root/boot/vmlinuz-6.17.0-999-generic
+          test -f root/usr/src/linux-headers-6.17.0-999-generic/Makefile
+          test -f root/lib/modules/6.17.0-999-generic/modules.builtin
+
