@@ -1,0 +1,101 @@
+name: Build i915 candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i915-questing-candidate
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    container:
+      image: ubuntu:25.10
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      SOURCE_REPOSITORY: https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/questing
+      SOURCE_COMMIT: f86737eef0da36deab294903e859265785a0feda
+      PATCH_URL: https://bugs.launchpad.net/ubuntu/+source/linux/+bug/2161098/+attachment/5993118/+files/0001-drm-i915-Ensure-stale-bytes-from-the-heap-aren-t-int.patch
+      PATCH_SHA256: b237a20b8787272cf977c45a8f46ad22be3096306ae12a12db8e16bf4876f900
+    steps:
+      - name: Install source and packaging tools
+        run: |
+          set -eux
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            ca-certificates curl devscripts equivs fakeroot git build-essential
+
+      - name: Fetch exact Ubuntu source
+        run: |
+          set -eux
+          git init kernel
+          git -C kernel remote add origin "$SOURCE_REPOSITORY"
+          git -C kernel fetch --depth=1 origin "$SOURCE_COMMIT"
+          git -C kernel checkout --detach FETCH_HEAD
+          test "$(git -C kernel rev-parse HEAD)" = "$SOURCE_COMMIT"
+
+      - name: Verify and apply Launchpad patch
+        run: |
+          set -eux
+          curl --fail --location --output candidate.patch "$PATCH_URL"
+          echo "$PATCH_SHA256  candidate.patch" | sha256sum --check --strict
+          git -C kernel apply --check ../candidate.patch
+          git -C kernel apply ../candidate.patch
+          git -C kernel diff --check
+
+      - name: Give candidate a non-conflicting ABI
+        working-directory: kernel
+        run: |
+          set -eux
+          sed -i '1 s/6\.17\.0-41\.41/6.17.0-999.41~lp2161098.1/' debian.master/changelog
+          head -1 debian.master/changelog | grep -F 'linux (6.17.0-999.41~lp2161098.1)'
+
+      - name: Resolve exact source build dependencies
+        working-directory: kernel
+        run: |
+          set -eux
+          chmod a+x debian/rules debian/scripts/* debian/scripts/misc/*
+          fakeroot debian/rules clean
+          yes | mk-build-deps --install --remove --tool 'apt-get -y --no-install-recommends' debian/control
+
+      - name: Build generic kernel and headers
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          fakeroot debian/rules clean
+          fakeroot debian/rules binary-headers binary-generic 2>&1 | tee ../build.log
+
+      - name: Record provenance and package checksums
+        if: ${{ !cancelled() }}
+        run: |
+          set -eux
+          mkdir -p artifacts
+          cp build.log artifacts/ 2>/dev/null || true
+          find . -maxdepth 1 -type f \
+            \( -name '*.deb' -o -name '*.changes' -o -name '*.buildinfo' \) \
+            -exec cp {} artifacts/ \;
+          {
+            echo "source_repository=$SOURCE_REPOSITORY"
+            echo "source_commit=$SOURCE_COMMIT"
+            echo "patch_url=$PATCH_URL"
+            echo "patch_sha256=$PATCH_SHA256"
+            echo "candidate_version=6.17.0-999.41~lp2161098.1"
+            echo "runner_image=ubuntu-24.04"
+            echo "build_container=ubuntu:25.10"
+          } > artifacts/MANIFEST.txt
+          (cd artifacts && sha256sum ./* > SHA256SUMS)
+
+      - name: Upload build evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ubuntu-6.17.0-999-i915-lp2161098
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+
